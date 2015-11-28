@@ -1,19 +1,19 @@
 package main
 
 import (
-	"code.google.com/p/go.crypto/ssh"
 	"flag"
 	"fmt"
-	"github.com/dutchcoders/ssh-proxy"
-	"io"
 	"io/ioutil"
 	"net"
+
+	"github.com/dutchcoders/sshproxy"
+	"golang.org/x/crypto/ssh"
 )
 
 func main() {
-	listen := flag.String("listen", ":8022", "listen address")
+	listen := flag.String("listen", ":2022", "listen address")
 	dest := flag.String("dest", ":22", "destination address")
-	key := flag.String("key", "conf/id_rsa", "rsa key to use")
+	key := flag.String("key", "host_key", "rsa key to use")
 	flag.Parse()
 
 	privateBytes, err := ioutil.ReadFile(*key)
@@ -26,46 +26,45 @@ func main() {
 		panic("Failed to parse private key")
 	}
 
-	var sessions map[net.Addr]map[string]interface{} = make(map[net.Addr]map[string]interface{})
+	sessions := map[net.Addr]map[string]interface{}{}
 
 	config := &ssh.ServerConfig{
 		PasswordCallback: func(c ssh.ConnMetadata, pass []byte) (*ssh.Permissions, error) {
-			fmt.Printf("Login attempt: %s, user %s password: %s", c.RemoteAddr(), c.User(), string(pass))
+			fmt.Printf("Login attempt: %s, user %s password: %s\n", c.RemoteAddr(), c.User(), string(pass))
 
 			sessions[c.RemoteAddr()] = map[string]interface{}{
 				"username": c.User(),
 				"password": string(pass),
 			}
 
-			clientConfig := &ssh.ClientConfig{}
-
-			clientConfig.User = c.User()
-			clientConfig.Auth = []ssh.AuthMethod{
-				ssh.Password(string(pass)),
+			clientConfig := &ssh.ClientConfig{
+				User: c.User(),
+				Auth: []ssh.AuthMethod{
+					ssh.KeyboardInteractive(func(user, instruction string, questions []string, echos []bool) ([]string, error) {
+						if len(questions) == 1 && questions[0] == "Password:" {
+							return []string{string(pass)}, nil
+						}
+						return []string{}, nil
+					}),
+				},
 			}
-
 			client, err := ssh.Dial("tcp", *dest, clientConfig)
-
+			if err != nil {
+				return nil, err
+			}
 			sessions[c.RemoteAddr()]["client"] = client
-			return nil, err
+			return nil, nil
 		},
 	}
-
 	config.AddHostKey(private)
 
 	sshproxy.ListenAndServe(*listen, config, func(c ssh.ConnMetadata) (*ssh.Client, error) {
-		meta, _ := sessions[c.RemoteAddr()]
-
-		fmt.Println(meta)
-
+		meta, ok := sessions[c.RemoteAddr()]
+		if !ok {
+			return nil, fmt.Errorf("session not found")
+		}
 		client := meta["client"].(*ssh.Client)
 		fmt.Printf("Connection accepted from: %s", c.RemoteAddr())
-
-		return client, err
-	}, func(r io.ReadCloser) (io.ReadCloser, error) {
-		return sshproxy.NewTypeWriterReadCloser(r), nil
-	}, func(c ssh.ConnMetadata) error {
-		fmt.Println("Connection closed.")
-		return nil
-	})
+		return client, nil
+	}, nil, nil)
 }

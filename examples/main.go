@@ -4,9 +4,10 @@ import (
 	"flag"
 	"fmt"
 	"io/ioutil"
+	"log"
 	"net"
 
-	"github.com/dutchcoders/sshproxy"
+	"github.com/creack/sshproxy"
 	"golang.org/x/crypto/ssh"
 )
 
@@ -58,7 +59,7 @@ func main() {
 	}
 	config.AddHostKey(private)
 
-	sshproxy.ListenAndServe(*listen, config, func(c ssh.ConnMetadata) (*ssh.Client, error) {
+	log.Fatal(sshproxy.ListenAndServe(*listen, config, func(c ssh.ConnMetadata) (*ssh.Client, error) {
 		meta, ok := sessions[c.RemoteAddr()]
 		if !ok {
 			return nil, fmt.Errorf("session not found")
@@ -66,5 +67,5 @@ func main() {
 		client := meta["client"].(*ssh.Client)
 		fmt.Printf("Connection accepted from: %s", c.RemoteAddr())
 		return client, nil
-	}, nil, nil)
+	}, nil, nil))
 }
